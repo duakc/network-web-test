@@ -12,7 +12,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "fetch-icons": "node scripts/fetch-icons.mjs",
-    "sync-icons": "node scripts/sync-icons.mjs"
+    "sync-icons": "node scripts/sync-icons.mjs",
+    "detect-cdn": "node scripts/detect-cdn.mjs"
   },
   "dependencies": {
     "@fontsource/fraunces": "^5.1.0",

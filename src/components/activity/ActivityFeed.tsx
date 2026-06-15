@@ -103,6 +103,7 @@ export function ActivityFeed({
             <SpeedActivity
               key={activity.id}
               activity={activity}
+              onStop={onStopActivity}
               onRemove={onRemove}
               onRetest={onRetest}
             />
@@ -160,10 +161,12 @@ function ActivityHeader({
 
 function SpeedActivity({
   activity,
+  onStop,
   onRemove,
   onRetest,
 }: {
   activity: Extract<Activity, { kind: "speed" }>;
+  onStop: (id: string) => void;
   onRemove: (id: string) => void;
   onRetest: (target: NetworkTarget, direction: SpeedDirection) => void;
 }) {
@@ -179,6 +182,14 @@ function SpeedActivity({
   // Re-test offered once the run is settled (done or errored), for comparison.
   const settled = !queued && !running;
   const canUpload = !!target.speed?.uploadUrl;
+  // The other direction to offer alongside "重新测速" (which repeats this run's).
+  const otherDir: SpeedDirection = direction === "up" ? "down" : "up";
+  const otherLabel = otherDir === "up" ? "上行测速" : "下行测速";
+  const OtherIcon = otherDir === "up" ? ArrowUp : ArrowDown;
+  const otherDisabled = otherDir === "up" && !canUpload;
+  const hasPct =
+    result.status === "done" &&
+    [result.p25, result.p50, result.p95].every((v) => typeof v === "number");
 
   return (
     <Card id={`activity-${activity.id}`} className={cn(queued && "opacity-70")}>
@@ -221,6 +232,15 @@ function SpeedActivity({
 
         {!queued && <SpeedChart samples={samples} />}
 
+        {/* Per-second throughput distribution (settled runs only). */}
+        {hasPct && (
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat label="25th" value={formatSpeed(result.p25!)} />
+            <MiniStat label="50th" value={formatSpeed(result.p50!)} />
+            <MiniStat label="95th" value={formatSpeed(result.p95!)} />
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{queued ? "等待前一个测速完成…" : `用时 ${elapsedMs ? formatSeconds(elapsedMs) : "—"} · 曲线为每秒平均`}</span>
           {result.status === "error" && !canUpload && direction === "up" ? null : result.status === "error" ? (
@@ -228,26 +248,31 @@ function SpeedActivity({
           ) : null}
         </div>
 
-        {/* Re-test buttons keep this result and queue a fresh one for comparison. */}
+        {/* Stop keeps the partial result on screen (X would discard it). */}
+        {running && (
+          <Button variant="outline" size="sm" className="w-full" onClick={() => onStop(activity.id)}>
+            <Square className="fill-current" />
+            停止
+          </Button>
+        )}
+
+        {/* Re-test repeats this run's direction; the other button switches direction.
+            Both keep this result and queue a fresh one for comparison. */}
         {settled && (
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => onRetest(target, direction)}>
               <RotateCw />
               重新测速
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => onRetest(target, "down")}>
-              <ArrowDown />
-              下载
-            </Button>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onRetest(target, "up")}
-              disabled={!canUpload}
-              title={canUpload ? "上行测速" : "该网站不支持上行测速"}
+              onClick={() => onRetest(target, otherDir)}
+              disabled={otherDisabled}
+              title={otherDisabled ? "该网站不支持上行测速" : otherLabel}
             >
-              <ArrowUp />
-              上传
+              <OtherIcon />
+              {otherLabel}
             </Button>
           </div>
         )}
@@ -287,7 +312,7 @@ function LatencyActivity({
           onClose={() => onRemove(activity.id)}
         />
 
-        <LatencyBars samples={result.samples} total={result.samples.length} maxSlots={64} />
+        <LatencyBars samples={result.samples} notes={result.notes} total={result.samples.length} maxSlots={64} />
 
         {done && (
           <div className="grid grid-cols-5 gap-2">
@@ -296,6 +321,15 @@ function LatencyActivity({
             <MiniStat label="最大" value={formatMs(result.max!, 0)} />
             <MiniStat label="抖动" value={formatMs(result.jitter ?? 0, 0)} />
             <MiniStat label="丢包" value={`${Math.round((result.loss ?? 0) * 100)}%`} />
+          </div>
+        )}
+
+        {/* Percentiles: only meaningful on large runs (>16 probes). */}
+        {done && result.samples.length > 16 && Number.isFinite(result.p50) && (
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat label="25th" value={formatMs(result.p25!, 0)} />
+            <MiniStat label="50th" value={formatMs(result.p50!, 0)} />
+            <MiniStat label="95th" value={formatMs(result.p95!, 0)} />
           </div>
         )}
 
@@ -349,6 +383,13 @@ function MonitorActivity({
           <MiniStat label="最大" value={typeof stats.max === "number" ? formatMs(stats.max, 0) : "—"} />
           <MiniStat label="抖动" value={formatMs(stats.jitter ?? 0, 0)} />
         </div>
+        {typeof stats.p50 === "number" && Number.isFinite(stats.p50) && (
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat label="25th" value={formatMs(stats.p25!, 0)} />
+            <MiniStat label="50th" value={formatMs(stats.p50!, 0)} />
+            <MiniStat label="95th" value={formatMs(stats.p95!, 0)} />
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-2">
           <MiniStat label="时长" value={formatSeconds(durationS * 1000)} />
           <MiniStat label="样本" value={String(stats.count)} />

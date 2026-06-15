@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Settings2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Settings2 } from "lucide-react";
 
 import {
   Card,
@@ -27,6 +27,11 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
   const rampStepSec = (
     settings.speedDurationMs / 1000 / settings.speedThreads
   ).toFixed(1);
+
+  const isPresetThread = (THREAD_OPTIONS as readonly number[]).includes(
+    settings.speedThreads,
+  );
+  const [customThread, setCustomThread] = useState(!isPresetThread);
 
   return (
     <Card>
@@ -62,15 +67,43 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
         {/* Speed */}
         <section className="space-y-2">
           <SectionLabel>速度测试</SectionLabel>
-          <div className="inline-flex w-full items-center gap-0.5 rounded-md bg-muted p-0.5">
+          <div className="space-y-1.5">
+            <Label className="text-xs">测速方向</Label>
+            <div className="inline-flex w-full items-center gap-0.5 rounded-lg bg-muted p-0.5">
+              {([
+                { dir: "down", label: "下行", Icon: ArrowDown },
+                { dir: "up", label: "上行", Icon: ArrowUp },
+              ] as const).map(({ dir, label, Icon }) => (
+                <button
+                  key={dir}
+                  type="button"
+                  onClick={() => onChange({ speedDirection: dir })}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1 rounded-md px-1 py-1 text-xs font-medium transition-colors",
+                    settings.speedDirection === dir
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Label className="text-xs">线程数</Label>
+          <div className="inline-flex w-full items-center gap-0.5 rounded-lg bg-muted p-0.5">
             {THREAD_OPTIONS.map((n) => (
               <button
                 key={n}
                 type="button"
-                onClick={() => onChange({ speedThreads: n })}
+                onClick={() => {
+                  setCustomThread(false);
+                  onChange({ speedThreads: n });
+                }}
                 className={cn(
-                  "flex-1 rounded px-1 py-1 text-xs font-medium tabular-nums transition-colors",
-                  settings.speedThreads === n
+                  "flex-1 rounded-md px-1 py-1 text-xs font-medium tabular-nums transition-colors",
+                  !customThread && settings.speedThreads === n
                     ? "bg-card text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
                 )}
@@ -78,8 +111,60 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
                 {n}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setCustomThread(true)}
+              className={cn(
+                "flex-1 rounded-md px-1 py-1 text-xs font-medium transition-colors",
+                customThread || !isPresetThread
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              自定义
+            </button>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          {(customThread || !isPresetThread) && (
+            <NumberField
+              label="自定义线程数"
+              value={settings.speedThreads}
+              min={1}
+              max={64}
+              onChange={(v) => onChange({ speedThreads: Math.max(1, v) })}
+            />
+          )}
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            并发连接数：线程越多越能跑满高带宽链路，单线程更接近单条连接的真实体感。
+          </p>
+          {/* Stop condition: time and traffic are mutually exclusive. */}
+          <Label className="text-xs">停止条件</Label>
+          <div className="inline-flex w-full items-center gap-0.5 rounded-lg bg-muted p-0.5">
+            {([
+              { mode: "time", label: "按时间" },
+              { mode: "data", label: "按流量" },
+            ] as const).map(({ mode, label }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() =>
+                  onChange(
+                    mode === "data" && (settings.speedStopMB ?? 0) < 300
+                      ? { speedLimitMode: mode, speedStopMB: 300 }
+                      : { speedLimitMode: mode },
+                  )
+                }
+                className={cn(
+                  "flex-1 rounded-md px-1 py-1 text-xs font-medium transition-colors",
+                  settings.speedLimitMode === mode
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {settings.speedLimitMode === "time" ? (
             <NumberField
               label="时长(秒)"
               value={settings.speedDurationMs / 1000}
@@ -87,16 +172,15 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
               max={120}
               onChange={(v) => onChange({ speedDurationMs: v * 1000 })}
             />
+          ) : (
             <NumberField
               label="流量上限(MB)"
-              value={settings.speedStopMB ?? ""}
-              min={0}
-              max={10000}
-              allowEmpty
-              placeholder="不限"
-              onChange={(v) => onChange({ speedStopMB: v > 0 ? v : null })}
+              value={settings.speedStopMB ?? 300}
+              min={300}
+              max={100000}
+              onChange={(v) => onChange({ speedStopMB: Math.max(300, v) })}
             />
-          </div>
+          )}
           <ToggleRow
             id="ramp"
             label="渐进加速（延迟启动线程）"

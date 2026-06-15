@@ -1,4 +1,5 @@
 import { toMbps } from "@/lib/format";
+import { percentile } from "@/lib/network/latency";
 import type { SpeedConfig, SpeedProgress, SpeedResult } from "@/types";
 
 /**
@@ -18,6 +19,13 @@ export interface RunSpeedTestOptions {
   durationMs: number;
   stopBytes?: number | null;
   ramp?: boolean;
+  /**
+   * Window over which ramped threads stagger their start. Defaults to
+   * `durationMs`. In data-capped mode `durationMs` is pushed far out (so only
+   * the byte cap stops the run), so the caller passes the configured duration
+   * here to keep ramp pacing sane.
+   */
+  rampWindowMs?: number;
   /** "down" streams a payload in; "up" POSTs a payload out (needs uploadUrl). */
   direction?: "down" | "up";
   onProgress?: (progress: SpeedProgress) => void;
@@ -25,9 +33,25 @@ export interface RunSpeedTestOptions {
   signal?: AbortSignal;
 }
 
-const CLOUDFLARE_BYTES_PER_THREAD = 300 * 1024 * 1024;
-/** Per-request upload payload (reused across requests/threads). */
-const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+/**
+ * Cloudflare's `speed.cloudflare.com/__down` rejects `?bytes=` values at/above
+ * ~100 MB with **HTTP 403** *unless* the request carries a `Referer` (the cap is
+ * lifted once any referrer is present). Browsers send the page origin as the
+ * referrer by default, and we also force one on the fetch (see `streamOnce`), so
+ * a larger 300 MiB payload streams fine and re-loops to fill the time budget.
+ */
+const CLOUDFLARE_BYTES_PER_THREAD = 300 * 1024 * 1024; // 300 MiB per request.
+
+/** A speed run always transfers at least this much before it may stop. */
+const MIN_SPEED_BYTES = 300 * 1024 * 1024; // 300 MiB minimum sample.
+/**
+ * Per-request upload payload (reused across requests/threads). The Blob is left
+ * type-less on purpose: a typed body (or an `xhr.upload` progress listener) makes
+ * the cross-origin POST "non-simple" and triggers a CORS preflight, which
+ * `speed.cloudflare.com/__up` answers with 400 — so we keep it a simple request
+ * and account bytes per completed chunk instead.
+ */
+const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 let uploadBody: Blob | null = null;
 function getUploadBody(): Blob {
   if (!uploadBody) uploadBody = new Blob([new Uint8Array(UPLOAD_CHUNK_BYTES)]);
@@ -57,6 +81,7 @@ export async function runSpeedTest(
     durationMs,
     stopBytes = null,
     ramp = false,
+    rampWindowMs = durationMs,
     direction = "down",
     onProgress,
     sampleIntervalMs = 200,
@@ -71,21 +96,33 @@ export async function runSpeedTest(
   const shared: Shared = { bytes: 0, firstByteAt: null, activeThreads: 0 };
   const start = performance.now();
 
+  // Minimum transfer floor (download only): a run never stops before
+  // MIN_SPEED_BYTES, so even a fast link that blows past the time budget still
+  // measures a meaningful sample (and a too-small 流量上限 is raised to this
+  // floor). Upload uplinks are typically far slower, so a 300 MB floor there
+  // would punish the user — upload just honours the time/stop budget.
+  const floorBytes = direction === "up" ? 0 : MIN_SPEED_BYTES;
+  const effectiveStopBytes = stopBytes
+    ? Math.max(stopBytes, floorBytes)
+    : null;
+  let durationElapsed = false;
+
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
-  const stopTimer = setTimeout(() => controller.abort(), durationMs);
-
-  // Upload uses XHR (for upload progress); abort must tear those down too.
-  const liveXhrs = new Set<XMLHttpRequest>();
-  controller.signal.addEventListener("abort", () => liveXhrs.forEach((x) => x.abort()), {
-    once: true,
-  });
+  // The time budget is a soft target: it won't cut the run off until the byte
+  // floor is met (otherwise sample() trips the abort once the floor is reached).
+  const stopTimer = setTimeout(() => {
+    durationElapsed = true;
+    if (shared.bytes >= floorBytes) controller.abort();
+  }, durationMs);
 
   // --- Per-second curve + live metrics. ---
   let emittedSeconds = 0;
   let bytesAtLastSecond = 0;
   let maxBps = 0;
+  // Per-second throughput (bytes/sec) — the distribution behind the percentiles.
+  const perSecBps: number[] = [];
 
   const sample = () => {
     const now = performance.now();
@@ -97,6 +134,7 @@ export async function runSpeedTest(
       const secondBytes = shared.bytes - bytesAtLastSecond;
       bytesAtLastSecond = shared.bytes;
       maxBps = Math.max(maxBps, secondBytes); // bytes in 1s == bytes/second
+      perSecBps.push(secondBytes);
       curve = { t: emittedSeconds, mbps: Number(toMbps(secondBytes).toFixed(2)) };
     }
 
@@ -114,15 +152,16 @@ export async function runSpeedTest(
       curve,
     });
 
-    if (stopBytes && shared.bytes >= stopBytes) controller.abort();
+    if (effectiveStopBytes && shared.bytes >= effectiveStopBytes) controller.abort();
+    else if (durationElapsed && shared.bytes >= floorBytes) controller.abort();
   };
 
   const ticker = setInterval(sample, sampleIntervalMs);
 
   try {
-    const rampStep = ramp ? durationMs / threadCount : 0;
+    const rampStep = ramp ? rampWindowMs / threadCount : 0;
     const worker = direction === "up"
-      ? () => runUploadWorker(config.uploadUrl!, shared, controller.signal, liveXhrs)
+      ? () => runUploadWorker(config.uploadUrl!, shared, controller.signal)
       : () => runWorker(config, shared, controller.signal);
     const workers = Array.from({ length: threadCount }, (_, i) =>
       sleep(rampStep * i, controller.signal).then(() =>
@@ -152,6 +191,8 @@ export async function runSpeedTest(
   const durationMeasured = end - measuredSince;
   const avgBps = durationMeasured > 0 ? shared.bytes / (durationMeasured / 1000) : 0;
 
+  const sortedBps = [...perSecBps].sort((a, b) => a - b);
+
   return {
     status: "done",
     threads: threadCount,
@@ -161,56 +202,59 @@ export async function runSpeedTest(
     avgBps,
     maxBps: Math.max(maxBps, avgBps),
     bytes: shared.bytes,
+    p25: sortedBps.length ? percentile(sortedBps, 25) : undefined,
+    p50: sortedBps.length ? percentile(sortedBps, 50) : undefined,
+    p95: sortedBps.length ? percentile(sortedBps, 95) : undefined,
   };
 }
 
 async function runWorker(config: SpeedConfig, shared: Shared, signal: AbortSignal): Promise<void> {
-  if (config.kind === "cloudflare") {
-    await streamOnce(`${config.url}?bytes=${CLOUDFLARE_BYTES_PER_THREAD}`, shared, signal);
-    return;
-  }
+  // Each worker re-fetches the SAME url until the time/byte budget is hit. We do
+  // NOT add a cache-buster: a unique query string forces an edge-cache MISS on
+  // every request (Fastly/Cloudflare), which throttles throughput to the origin
+  // pull instead of measuring the CDN. `cache: "no-store"` already stops the
+  // browser from serving its own cached copy, so the same url is the fast path.
+  const url =
+    config.kind === "cloudflare"
+      ? `${config.url}?bytes=${CLOUDFLARE_BYTES_PER_THREAD}`
+      : config.url;
   while (!signal.aborted) {
-    const url = `${config.url}${config.url.includes("?") ? "&" : "?"}_=${performance.now()}`;
     await streamOnce(url, shared, signal);
   }
 }
 
 /**
- * Upload worker: POSTs a fixed payload repeatedly via XHR so we can read
- * `upload.onprogress` (fetch gives no upload progress). Bytes are folded into
- * the shared counter exactly like the download path.
+ * Upload worker: POSTs a fixed payload repeatedly via `fetch`. We deliberately
+ * avoid XHR's `upload.onprogress` — registering an upload listener makes the
+ * cross-origin POST non-simple and triggers a CORS preflight that
+ * `speed.cloudflare.com/__up` rejects (400). With a plain simple POST we get no
+ * mid-flight progress, so bytes are accounted per *completed* chunk; the headline
+ * average (total bytes / elapsed) stays accurate, the live curve is just steppier.
  */
 async function runUploadWorker(
   url: string,
   shared: Shared,
   signal: AbortSignal,
-  liveXhrs: Set<XMLHttpRequest>,
 ): Promise<void> {
   const body = getUploadBody();
   shared.activeThreads += 1;
   try {
     while (!signal.aborted) {
-      await new Promise<void>((resolve) => {
-        const xhr = new XMLHttpRequest();
-        liveXhrs.add(xhr);
-        let last = 0;
-        xhr.open("POST", `${url}${url.includes("?") ? "&" : "?"}_=${performance.now()}`);
-        xhr.upload.onprogress = (e) => {
-          if (shared.firstByteAt === null) shared.firstByteAt = performance.now();
-          shared.bytes += e.loaded - last;
-          last = e.loaded;
-        };
-        xhr.onloadend = () => {
-          liveXhrs.delete(xhr);
-          resolve();
-        };
-        try {
-          xhr.send(body);
-        } catch {
-          liveXhrs.delete(xhr);
-          resolve();
-        }
-      });
+      try {
+        await fetch(url, {
+          method: "POST",
+          body,
+          mode: "cors",
+          cache: "no-store",
+          referrerPolicy: "strict-origin-when-cross-origin",
+          signal,
+        });
+      } catch {
+        if (signal.aborted) break;
+        throw new Error("上行测速失败");
+      }
+      if (shared.firstByteAt === null) shared.firstByteAt = performance.now();
+      shared.bytes += UPLOAD_CHUNK_BYTES;
     }
   } finally {
     shared.activeThreads -= 1;
@@ -220,7 +264,15 @@ async function runUploadWorker(
 async function streamOnce(url: string, shared: Shared, signal: AbortSignal): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(url, { cache: "no-store", signal });
+    res = await fetch(url, {
+      cache: "no-store",
+      mode: "cors",
+      // Force a referrer: Cloudflare's __down lifts its byte cap only when one
+      // is present. The browser sends the origin by default, but an explicit
+      // policy survives a deployment-level `Referrer-Policy: no-referrer`.
+      referrerPolicy: "strict-origin-when-cross-origin",
+      signal,
+    });
   } catch (err) {
     if (signal.aborted) return;
     throw err;

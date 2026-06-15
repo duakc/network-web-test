@@ -26,6 +26,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Pull any missing built-in site icons into public/icons/ (only fetches
+      # ones not already committed; never overwrites manual overrides). Failures
+      # are non-fatal — the committed icons (and the letter-avatar fallback in
+      # the UI) cover anything that doesn't download.
+      - name: Fetch icons
+        run: pnpm fetch-icons
+        continue-on-error: true
+
+      # `pnpm build` runs `prebuild` (sync-icons → applies icons-override/ and
+      # regenerates src/config/icon-overrides.ts) before `tsc -b && vite build`,
+      # so it must come AFTER fetch-icons. CDN detection (src/config/cdn-detected.ts)
+      # is refreshed by the scheduled refresh-cdn workflow, not here.
       - name: Build
         run: pnpm build
 

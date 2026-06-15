@@ -4,6 +4,7 @@ import { PanelRightClose } from "lucide-react";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { IpInfoCard } from "@/components/ip/IpInfoCard";
 import { FloatingControls } from "@/components/layout/FloatingControls";
+import { LinksCard } from "@/components/layout/LinksCard";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SiteList } from "@/components/site/SiteList";
 import { Button } from "@/components/ui/button";
@@ -29,12 +30,54 @@ export default function App() {
   } = useTestRunner(settings);
 
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const [rightOpen, setRightOpen] = useState(isDesktop);
+  // Activity panel is hidden by default (both desktop & mobile); the user opens it
+  // with the bottom-right toggle. It also auto-reveals when a new test starts.
+  const [rightOpen, setRightOpen] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const leftRef = useRef<HTMLDivElement>(null);
 
-  // Keep the panel resident on desktop; closed (drawer) on mobile by default.
-  useEffect(() => setRightOpen(isDesktop), [isDesktop]);
+  // Resizable docked panel: drag the divider to widen the activity column (e.g.
+  // to read a speed chart closely). Persisted; both sides keep a minimum width.
+  const RIGHT_MIN = 320;
+  const LEFT_MIN = 480;
+  // Default split: left (site list) 65% / right (activity) 35%.
+  const [rightWidth, setRightWidth] = useState(() => {
+    const saved = Number(localStorage.getItem("network-test:rightWidth"));
+    return saved >= RIGHT_MIN ? saved : Math.round(window.innerWidth * 0.35);
+  });
+  useEffect(() => {
+    localStorage.setItem("network-test:rightWidth", String(rightWidth));
+  }, [rightWidth]);
+
+  // Re-clamp on mount and whenever the window shrinks, so a persisted (or large)
+  // panel width never starves the left column below its minimum.
+  useEffect(() => {
+    const clamp = () =>
+      setRightWidth((w) =>
+        Math.max(RIGHT_MIN, Math.min(w, window.innerWidth - LEFT_MIN)),
+      );
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, []);
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const w = window.innerWidth - ev.clientX;
+      setRightWidth(Math.max(RIGHT_MIN, Math.min(w, window.innerWidth - LEFT_MIN)));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   // When a new activity is added (newest is at the front), reveal the panel and
   // scroll to it.
@@ -64,7 +107,8 @@ export default function App() {
           </Button>
         </div>
       )}
-      <IpInfoCard data={ip.data} loading={ip.loading} error={ip.error} reload={ip.reload} />
+      <LinksCard />
+      <IpInfoCard ip={ip} />
       <SettingsCard settings={settings} onChange={update} />
       <ActivityFeed
         activities={activities}
@@ -79,12 +123,13 @@ export default function App() {
 
   return (
     <div className="flex h-dvh overflow-hidden">
-      <div ref={leftRef} className="no-scrollbar h-full flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+      <div ref={leftRef} className="no-scrollbar h-full min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
         <div className="mx-auto w-full max-w-[1400px]">
           <SiteList
             latencyResults={latencyResults}
             activities={activities}
             latencyCount={settings.latencyCount}
+            direction={settings.speedDirection}
             onTestLatency={testLatency}
             onAutoEnqueue={autoEnqueue}
             onTestSpeed={testSpeed}
@@ -98,11 +143,25 @@ export default function App() {
         </div>
       </div>
 
-      {/* Desktop: docked, resident column */}
+      {/* Desktop: docked, resident column with a draggable divider */}
       {isDesktop && rightOpen && (
-        <aside className="no-scrollbar h-full w-[400px] shrink-0 overflow-y-auto border-l border-border px-4 py-4">
-          {rightContent(true)}
-        </aside>
+        <>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={startResize}
+            title="拖动调整宽度"
+            className="group relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40"
+          >
+            <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+          </div>
+          <aside
+            style={{ width: rightWidth }}
+            className="no-scrollbar h-full shrink-0 overflow-y-auto border-l border-border bg-muted/30 px-4 py-4"
+          >
+            {rightContent(true)}
+          </aside>
+        </>
       )}
 
       {/* Mobile: drawer overlay, click backdrop to close */}

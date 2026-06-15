@@ -6,15 +6,17 @@ import {
   LineChart,
   Loader2,
   Pencil,
+  Server,
   Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useCdnNode } from "@/hooks/useCdnNode";
 import { useInView } from "@/hooks/useInView";
-import { hostOf } from "@/lib/network/site";
+import { cdnNodePlace, hostOf, originOf } from "@/lib/network/site";
 import { cn } from "@/lib/utils";
-import type { LatencyResult, NetworkTarget } from "@/types";
+import type { CdnNode, LatencyResult, NetworkTarget } from "@/types";
 
 import { LatencyBars } from "./LatencyBars";
 
@@ -57,11 +59,32 @@ export function SiteCard({
   const status = result?.status ?? "idle";
   const latencyRunning = status === "running";
 
+  // Probe the CDN node *after* a latency test settles, refreshing on each run.
+  const [probeNonce, setProbeNonce] = useState(0);
+  const prevStatus = useRef(status);
+  useEffect(() => {
+    if (prevStatus.current === "running" && (status === "done" || status === "error")) {
+      setProbeNonce((n) => n + 1);
+    }
+    prevStatus.current = status;
+  }, [status]);
+  // Also resolve/refresh the CDN when a speed test starts — otherwise a card that
+  // is only speed-tested (never latency-tested) never shows its CDN.
+  const prevSpeed = useRef(speedRunning);
+  useEffect(() => {
+    if (!prevSpeed.current && speedRunning) setProbeNonce((n) => n + 1);
+    prevSpeed.current = speedRunning;
+  }, [speedRunning]);
+  const cdnNode = useCdnNode(target, probeNonce);
+
   useEffect(() => {
     if (!autoTest || !inView || triggered.current) return;
     triggered.current = true;
     if (status === "idle") onAutoTest();
   }, [autoTest, inView, status, onAutoTest]);
+
+  const siteUrl = originOf(target.latencyUrl) ?? target.latencyUrl;
+  const host = hostOf(target.latencyUrl);
 
   return (
     <div
@@ -76,10 +99,33 @@ export function SiteCard({
         <Favicon target={target} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">{target.name}</span>
+            {/* Instant hover tooltips (the native `title` attr has a ~1s delay). */}
+            <span className="group relative min-w-0">
+              <a
+                href={siteUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="block truncate text-sm font-medium hover:text-primary hover:underline"
+              >
+                {target.name}
+              </a>
+              <span className="pointer-events-none absolute -top-5 left-0 z-20 hidden whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 text-[10px] font-medium text-background shadow group-hover:block">
+                {target.name}
+              </span>
+            </span>
             {target.cloudflare && <Cloud className="size-3 shrink-0 text-primary" aria-label="Cloudflare 边缘" />}
-            <span className="ml-auto shrink-0 truncate pl-1 text-[11px] text-muted-foreground">
-              {hostOf(target.latencyUrl)}
+            <span className="group relative ml-auto min-w-0 shrink pl-1">
+              <a
+                href={siteUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="block truncate text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {host}
+              </a>
+              <span className="pointer-events-none absolute -top-5 right-0 z-20 hidden whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 text-[10px] font-medium text-background shadow group-hover:block">
+                {host}
+              </span>
             </span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -92,6 +138,10 @@ export function SiteCard({
               </span>
             ))}
           </div>
+          {/* CDN/network line — always rendered (reserves its height even when
+              empty) so every card is the same height. Shows a live PoP after a
+              probe, else the offline-detected ASN identity. */}
+          <CdnNodeLine target={target} node={cdnNode} />
         </div>
       </div>
 
@@ -100,6 +150,7 @@ export function SiteCard({
             the global count setting never re-lays-out an existing result. */}
         <LatencyBars
           samples={result?.samples ?? []}
+          notes={result?.notes}
           total={
             status === "done" || status === "error"
               ? Math.max(result?.samples.length ?? 1, 1)
@@ -122,6 +173,38 @@ export function SiteCard({
           {onRemove && <IconAction label="删除" icon={<Trash2 className="size-3.5" />} onClick={onRemove} danger />}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * CDN/network line under the tags. Always reserves its height (blank when there's
+ * nothing to show) so every card stays the same height.
+ *
+ * A regular site shows the CDN it sits behind (name only, no link). A CDN target
+ * shows just the live PoP — its card title already names the CDN. The PoP is a
+ * colo/airport code (shown as-is, friendly name on hover — codes are the
+ * universal identifier) or an ip.sb city. Resolved live; nothing is shown when a
+ * probe yields no PoP/IP.
+ */
+function CdnNodeLine({ target, node }: { target: NetworkTarget; node: CdnNode | null }) {
+  const place = node ? cdnNodePlace(node) : { label: "" };
+  const isCdnTarget = target.tags[0] === "CDN";
+  const cdnName = !isCdnTarget && node?.asnName ? node.asnName : null;
+
+  // Nothing resolved yet — keep the row height so the card never jumps / stays uniform.
+  if (!cdnName && !place.label) return <div className="mt-1 h-4" />;
+
+  return (
+    <div className="mt-1 flex h-4 items-center gap-1 text-[11px] leading-none text-muted-foreground">
+      <Server className="size-2.5 shrink-0 text-muted-foreground/50" />
+      {cdnName && <span className="truncate font-medium text-foreground/70">{cdnName}</span>}
+      {cdnName && place.label && <span className="shrink-0">·</span>}
+      {place.label && (
+        <span className="shrink-0" title={place.title}>
+          {place.label}
+        </span>
+      )}
     </div>
   );
 }

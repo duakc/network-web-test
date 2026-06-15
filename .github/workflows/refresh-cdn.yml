@@ -1,0 +1,75 @@
+name: Refresh CDN detection
+
+# Regenerates src/config/cdn-detected.ts (the id → CDN-vendor map used to pick
+# each target's runtime PoP probe). It makes ~90 sequential DoH + ip.sb calls, so
+# it runs on a schedule rather than on every deploy. When the map changes it is
+# committed back to main and a deploy is triggered so the fresh data ships.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # daily at 03:00 UTC
+  workflow_dispatch:
+
+# Don't pile up overlapping nightly runs.
+concurrency:
+  group: refresh-cdn
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the regenerated file
+      actions: write # trigger the deploy workflow
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ip.sb can rate-limit GitHub's runners, which makes detect-cdn emit FEWER
+      # entries than we already have. Since this run commits back to the repo, we
+      # must not let a throttled run degrade the committed map: if the new file
+      # has fewer entries than the old one, revert it and treat the run as a no-op.
+      - name: Regenerate cdn-detected.ts
+        run: |
+          set -euo pipefail
+          FILE=src/config/cdn-detected.ts
+          # Count `"id": "vendor",` entries with Node (deterministic across grep
+          # implementations).
+          count() { node -e "console.log((require('fs').readFileSync(process.argv[1],'utf8').match(/^\s*\"[^\"]+\":/gm)||[]).length)" "$1"; }
+          before=$(count "$FILE")
+          pnpm detect-cdn
+          after=$(count "$FILE")
+          echo "cdn-detected entries: before=$before after=$after"
+          if [ "$after" -lt "$before" ]; then
+            echo "::warning::detect-cdn produced fewer entries ($after < $before) — likely rate-limited; discarding this run."
+            git checkout -- "$FILE"
+          fi
+
+      - name: Commit and deploy if changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/config/cdn-detected.ts; then
+            echo "No CDN changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/config/cdn-detected.ts
+          git commit -m "chore: refresh CDN detection"
+          git push
+          # A push made with GITHUB_TOKEN does not itself trigger the deploy
+          # workflow, so kick it explicitly to ship the refreshed data.
+          gh workflow run deploy.yml

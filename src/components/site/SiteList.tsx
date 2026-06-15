@@ -1,9 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   Activity,
-  ArrowDown,
   ArrowDownNarrowWide,
-  ArrowUp,
   CheckSquare,
   ChevronRight,
   Gauge,
@@ -37,6 +35,8 @@ interface SiteListProps {
   latencyResults: Record<string, LatencyResult>;
   activities: ActivityItem[];
   latencyCount: number;
+  /** Speed-test direction, configured in the settings card. */
+  direction: SpeedDirection;
   onTestLatency: (targets: NetworkTarget[]) => void;
   onAutoEnqueue: (target: NetworkTarget) => void;
   onTestSpeed: (targets: NetworkTarget[], direction: SpeedDirection) => void;
@@ -49,6 +49,7 @@ export function SiteList({
   latencyResults,
   activities,
   latencyCount,
+  direction,
   onTestLatency,
   onAutoEnqueue,
   onTestSpeed,
@@ -66,7 +67,6 @@ export function SiteList({
   const [editing, setEditing] = useState<NetworkTarget | null>(null);
   const [grouped, setGrouped] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<SiteTag>>(new Set());
-  const [direction, setDirection] = useState<SpeedDirection>("down");
 
   // Tags actually present, in canonical order, for the quick-filter chips.
   const availableTags = useMemo(() => {
@@ -278,7 +278,6 @@ export function SiteList({
                 <Gauge />
                 测速 ({selectedSpeed.length})
               </Button>
-              <DirectionToggle direction={direction} onChange={setDirection} />
               <Button variant="outline" size="sm" onClick={removeSelected}>
                 <Trash2 />
                 删除 ({selectedTargets.length})
@@ -301,7 +300,6 @@ export function SiteList({
                 <Gauge />
                 测速全部
               </Button>
-              <DirectionToggle direction={direction} onChange={setDirection} />
             </>
           )}
 
@@ -338,9 +336,6 @@ export function SiteList({
             <Switch id="grouped" checked={grouped} onCheckedChange={setGrouped} />
             <Label htmlFor="grouped" className="cursor-pointer">按标签分组</Label>
           </div>
-          <span className="text-xs text-muted-foreground">
-            {grouped ? "组内按延迟排序" : "全部按延迟排序，低延迟在前"}
-          </span>
         </div>
 
         {formOpen && (
@@ -427,36 +422,22 @@ function SiteGrid({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useFlipReorder(ref, items.map((t) => t.id));
+  // Column count follows the grid's OWN width (auto-fill), not the viewport, so
+  // widening the activity panel reflows cards instead of squashing fixed columns.
+  // The min track is `max(14rem, (100% - 3 gaps)/4)`: forcing each column to be
+  // ≥¼ of the row caps the grid at 4 columns, while `min(…,100%)` still allows a
+  // single full-width column on a narrow panel — so always between 1 and 4.
   return (
-    <div ref={ref} className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+    <div
+      ref={ref}
+      className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,max(14rem,calc((100%-3*0.625rem)/4))),1fr))]"
+    >
       {items.map((t) => (
         <div key={t.id} data-flip-id={t.id} className="will-change-transform">
           {renderCard(t)}
         </div>
       ))}
     </div>
-  );
-}
-
-/** Down/Up toggle for the speed test. */
-function DirectionToggle({
-  direction,
-  onChange,
-}: {
-  direction: SpeedDirection;
-  onChange: (d: SpeedDirection) => void;
-}) {
-  const up = direction === "up";
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => onChange(up ? "down" : "up")}
-      title={up ? "当前：上行测速（点击切换为下行）" : "当前：下行测速（点击切换为上行）"}
-    >
-      {up ? <ArrowUp /> : <ArrowDown />}
-      {up ? "上行" : "下行"}
-    </Button>
   );
 }
 

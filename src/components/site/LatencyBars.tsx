@@ -1,10 +1,13 @@
 import { memo, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import type { ProbeNote } from "@/types";
 
 interface LatencyBarsProps {
   /** Ordered samples; `null` = lost probe. */
   samples: (number | null)[];
+  /** Per-sample diagnostics (status / failure reason), aligned to `samples`. */
+  notes?: (ProbeNote | null)[];
   /** Total expected samples (drives placeholders + bucket boundaries). */
   total: number;
   /** Maximum number of bars rendered; larger runs are downsampled into this. */
@@ -34,6 +37,7 @@ interface Slot {
  */
 export const LatencyBars = memo(function LatencyBars({
   samples,
+  notes,
   total,
   maxSlots = 16,
   className,
@@ -42,9 +46,6 @@ export const LatencyBars = memo(function LatencyBars({
 
   const n = Math.max(total, samples.length, 1);
   const slots = Math.min(n, maxSlots);
-
-  const ok = samples.filter((s): s is number => s !== null);
-  const max = ok.length ? Math.max(...ok, 1) : 1;
 
   const buckets: Slot[] = Array.from({ length: slots }, (_, b) => {
     const lo = Math.floor((b * n) / slots);
@@ -56,11 +57,37 @@ export const LatencyBars = memo(function LatencyBars({
     return { lo, hi, state: "value", avg: okVals.reduce((a, c) => a + c, 0) / okVals.length };
   });
 
+  // Scale to the tallest *rendered* bar (max of bucket averages), NOT the max
+  // raw sample. A single peak probe inside an averaged bucket otherwise sets the
+  // scale and squashes every other bar to near-zero.
+  const max = Math.max(
+    1,
+    ...buckets.filter((s) => s.state === "value").map((s) => s.avg),
+  );
+
+  // First note in the bucket carrying a status / reason — used to enrich the
+  // tooltip (e.g. show "HTTP 403" instead of a generic "丢包").
+  const noteFor = (s: Slot): ProbeNote | null => {
+    if (!notes) return null;
+    for (let i = s.lo; i < s.hi; i++) {
+      const note = notes[i];
+      if (note && (note.status !== undefined || note.reason)) return note;
+    }
+    return null;
+  };
+
   const label = (s: Slot) => {
     const range = s.hi - s.lo === 1 ? `${s.lo + 1}` : `${s.lo + 1}-${s.hi}`;
     if (s.state === "pending") return `${range}: 待测`;
-    if (s.state === "loss") return `${range}: 丢包`;
-    return `${range}: ${s.avg.toFixed(1)}ms`;
+    const note = noteFor(s);
+    if (s.state === "loss") {
+      if (note?.status !== undefined) return `${range}: HTTP ${note.status}`;
+      if (note?.reason) return `${range}: ${note.reason}`;
+      return `${range}: 丢包`;
+    }
+    // A reachable probe; append the status when we actually read one (cors mode).
+    const status = note?.status !== undefined ? ` · HTTP ${note.status}` : "";
+    return `${range}: ${s.avg.toFixed(1)}ms${status}`;
   };
 
   return (

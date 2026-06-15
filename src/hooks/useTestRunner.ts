@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { measureLatency } from "@/lib/network/latency";
+import { measureLatency, percentile } from "@/lib/network/latency";
 import { runSpeedTest } from "@/lib/network/speed";
 import type {
   Activity,
@@ -8,6 +8,7 @@ import type {
   MonitorPoint,
   MonitorStats,
   NetworkTarget,
+  ProbeNote,
   SpeedDirection,
   TestSettings,
 } from "@/types";
@@ -22,6 +23,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 function monitorStats(points: MonitorPoint[]): MonitorStats {
   const ok = points.map((p) => p.ms).filter((m): m is number => m !== null);
+  const sorted = [...ok].sort((a, b) => a - b);
   let jitter = 0;
   for (let i = 1; i < ok.length; i++) jitter += Math.abs(ok[i] - ok[i - 1]);
   return {
@@ -31,6 +33,9 @@ function monitorStats(points: MonitorPoint[]): MonitorStats {
     avg: ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : undefined,
     jitter: ok.length > 1 ? jitter / (ok.length - 1) : 0,
     loss: points.length ? (points.length - ok.length) / points.length : 0,
+    p25: ok.length ? percentile(sorted, 25) : undefined,
+    p50: ok.length ? percentile(sorted, 50) : undefined,
+    p95: ok.length ? percentile(sorted, 95) : undefined,
   };
 }
 
@@ -98,23 +103,50 @@ export function useTestRunner(settings: TestSettings) {
     }
 
     const ordered: (number | null)[] = [];
-    const setBoth = (r: LatencyResult) => {
+    const orderedNotes: (ProbeNote | null)[] = [];
+    // The card (16-slot bars) only needs to repaint when a whole bucket fills;
+    // the activity feed (64-slot bars) animates per probe. So they update at
+    // different cadences — see `onSample` below.
+    const pushCard = (r: LatencyResult) =>
       setLatencyResults((prev) => ({ ...prev, [target.id]: r }));
+    const pushFeed = (r: LatencyResult) => {
       if (activityId) {
         updateActivity(activityId, (a) =>
           a.kind === "latency" ? { ...a, running: r.status === "running", result: r } : a,
         );
       }
     };
+    const setBoth = (r: LatencyResult) => {
+      pushCard(r);
+      pushFeed(r);
+    };
 
     setBoth({ targetId: target.id, status: "running", samples: [] });
 
+    // The card's bars summarize into ≤16 blocks, so on large runs it only needs
+    // to repaint once per block (`step` probes). The activity feed shows every
+    // probe (synchronously, one sample = one update). The final result is always
+    // flushed to both by `.then` below.
+    const count = settingsRef.current.latencyCount;
+    const step = Math.max(1, Math.floor(count / 16));
+
     measureLatency(target.latencyUrl, {
-      count: settingsRef.current.latencyCount,
+      count,
+      probe: target.latency,
       signal: c.signal,
-      onSample: (rtt) => {
+      onSample: (rtt, note) => {
         ordered.push(rtt);
-        setBoth({ targetId: target.id, status: "running", samples: [...ordered] });
+        orderedNotes.push(note);
+        const r: LatencyResult = {
+          targetId: target.id,
+          status: "running",
+          samples: [...ordered],
+          notes: [...orderedNotes],
+        };
+        pushFeed(r); // per-probe: keep the feed's fine-grained bars in sync
+        if (ordered.length % step === 0 || ordered.length === count) {
+          pushCard(r); // per-bucket: only repaint the card when a block completes
+        }
       },
     })
       .then((stats) => {
@@ -124,16 +156,20 @@ export function useTestRunner(settings: TestSettings) {
           targetId: target.id,
           status: ok ? "done" : "error",
           samples: stats.samples,
+          notes: stats.notes,
           min: stats.min,
           max: stats.max,
           avg: stats.avg,
           jitter: stats.jitter,
           loss: stats.loss,
+          p25: stats.p25,
+          p50: stats.p50,
+          p95: stats.p95,
         });
       })
       .catch(() => {
         if (latencyControllers.current.get(target.id) !== c) return;
-        setBoth({ targetId: target.id, status: "error", samples: ordered });
+        setBoth({ targetId: target.id, status: "error", samples: ordered, notes: orderedNotes });
       })
       .finally(() => {
         if (latencyControllers.current.get(target.id) === c) {
@@ -173,11 +209,18 @@ export function useTestRunner(settings: TestSettings) {
         : a,
     );
 
+    // Time and traffic limits are mutually exclusive. In "data" mode the timer
+    // is pushed far out so only the byte cap stops the run; in "time" mode there
+    // is no byte cap (the engine's 300 MiB floor still applies to downloads).
+    const dataMode = s.speedLimitMode === "data";
     runSpeedTest(job.target.speed!, {
       threads: s.speedThreads,
-      durationMs: s.speedDurationMs,
-      stopBytes: s.speedStopMB ? s.speedStopMB * 1024 * 1024 : null,
+      durationMs: dataMode ? 24 * 60 * 60 * 1000 : s.speedDurationMs,
+      stopBytes: dataMode ? Math.max(300, s.speedStopMB ?? 300) * 1024 * 1024 : null,
       ramp: s.speedRamp,
+      // Ramp pacing follows the configured duration even when the byte cap (not
+      // time) is what actually stops the run.
+      rampWindowMs: s.speedDurationMs,
       direction: job.direction,
       signal: c.signal,
       onProgress: (p) =>
@@ -263,11 +306,16 @@ export function useTestRunner(settings: TestSettings) {
     ]);
 
     try {
-      await measureLatency(target.latencyUrl, { count: 1, signal: c.signal });
+      await measureLatency(target.latencyUrl, {
+        count: 1,
+        probe: target.latency,
+        signal: c.signal,
+      });
       while (!c.signal.aborted) {
         const stats = await measureLatency(target.latencyUrl, {
           count: 3,
           skipWarmup: true,
+          probe: target.latency,
           signal: c.signal,
         });
         if (c.signal.aborted) break;

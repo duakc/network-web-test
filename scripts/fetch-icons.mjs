@@ -33,7 +33,6 @@ const ICONS = {
   aws: "aws.amazon.com",
   gcp: "cloud.google.com",
   azure: "azure.microsoft.com",
-  ovh: "ovhcloud.com",
   digitalocean: "digitalocean.com",
   aliyun: "aliyun.com",
   tencentcloud: "cloud.tencent.com",
@@ -45,22 +44,18 @@ const ICONS = {
   bing: "bing.com",
   "cn-bing": "cn.bing.com",
   duckduckgo: "duckduckgo.com",
-  outlook: "outlook.com",
   youtube: "youtube.com",
   netflix: "netflix.com",
   spotify: "spotify.com",
   twitch: "twitch.tv",
-  "apple-music": "music.apple.com",
   douyin: "douyin.com",
   x: "x.com",
   reddit: "reddit.com",
   facebook: "facebook.com",
   linkedin: "linkedin.com",
   weibo: "weibo.com",
-  steam: "steampowered.com",
   epic: "epicgames.com",
   amazon: "amazon.com",
-  appstore: "apps.apple.com",
   aliexpress: "aliexpress.com",
   taobao: "taobao.com",
   jd: "jd.com",
@@ -77,7 +72,6 @@ const ICONS = {
   unpkg: "unpkg.com",
   office365: "office.com",
   apple: "apple.com",
-  icloud: "icloud.com",
   discord: "discord.com",
   instagram: "instagram.com",
   whatsapp: "whatsapp.com",
@@ -87,9 +81,23 @@ const ICONS = {
   dropbox: "dropbox.com",
   vercel: "vercel.com",
   netlify: "netlify.com",
-  paypal: "paypal.com",
-  stripe: "stripe.com",
   wikipedia: "wikipedia.org",
+  edgeone: "edgeone.ai",
+  "ovh-cdn": "ovhcloud.com",
+  cdn77: "cdn77.com",
+  "bunny-standard": "bunny.net",
+  "bunny-volume": "bunny.net",
+  cloudfront: "aws.amazon.com",
+  bytedance: "bytedance.com",
+  alicdn: "alibabacloud.com",
+  zenlayer: "zenlayer.com",
+  cdnetworks: "cdnetworks.com",
+  visa: "visa.com",
+  notion: "notion.so",
+  figma: "figma.com",
+  slack: "slack.com",
+  canva: "canva.com",
+  trello: "trello.com",
 };
 
 // Explicit, known-good icon URLs for cases the automatic sources get wrong.
@@ -102,9 +110,10 @@ const OVERRIDES = {
 function candidates(id, domain) {
   if (OVERRIDES[id]) return [OVERRIDES[id]];
   const enc = encodeURIComponent(domain);
+  // Source priority: explicit override (above) → Google S2 → DuckDuckGo.
   return [
-    `https://icons.duckduckgo.com/ip3/${domain}.ico`,
     `https://www.google.com/s2/favicons?domain=${enc}&sz=128`,
+    `https://icons.duckduckgo.com/ip3/${domain}.ico`,
   ];
 }
 

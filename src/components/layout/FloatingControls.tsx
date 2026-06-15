@@ -9,7 +9,11 @@ interface FloatingControlsProps {
   onToggleRight: () => void;
 }
 
-/** Bottom-left control cluster: panel toggle + scroll-to-top, side by side. */
+/**
+ * Floating controls. The activity-panel toggle sits bottom-RIGHT — right next to
+ * the panel it opens/closes, so toggling it costs almost no mouse travel. The
+ * scroll-to-top button stays bottom-left, by the scrollable site list it acts on.
+ */
 export function FloatingControls({
   containerRef,
   rightOpen,
@@ -26,11 +30,11 @@ export function FloatingControls({
   }, [containerRef]);
 
   return (
-    <div className="fixed bottom-4 left-4 z-30 flex items-center gap-2">
+    <>
       <Button
         variant="outline"
         size="icon"
-        className="size-10 rounded-full bg-card shadow-md"
+        className="fixed bottom-4 right-4 z-30 size-10 rounded-full bg-card shadow-md"
         onClick={onToggleRight}
         title={rightOpen ? "隐藏面板" : "显示面板"}
         aria-label="切换面板"
@@ -40,7 +44,7 @@ export function FloatingControls({
       {showTop && (
         <Button
           size="icon"
-          className="size-10 rounded-full shadow-lg"
+          className="fixed bottom-4 left-4 z-30 size-10 rounded-full shadow-lg"
           onClick={() => containerRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
           title="回到顶部"
           aria-label="回到顶部"
@@ -48,6 +52,6 @@ export function FloatingControls({
           <ArrowUp />
         </Button>
       )}
-    </div>
+    </>
   );
 }
