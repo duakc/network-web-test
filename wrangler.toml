@@ -1,0 +1,9 @@
+# Cloudflare Workers (static assets) deployment.
+# The built SPA in ./dist is served directly by Workers Static Assets; no
+# server-side Worker code is required. SPA routing falls back to index.html.
+name = "network-test"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

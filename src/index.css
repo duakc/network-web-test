@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme inspired by claude.ai: warm cream background, soft borders,
+ * the signature terracotta/coral accent, and generous rounding.
+ */
+@layer base {
+  :root {
+    --background: 48 33% 97%;
+    --foreground: 60 3% 18%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 60 3% 18%;
+
+    --primary: 15 56% 52%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 48 22% 92%;
+    --secondary-foreground: 60 3% 24%;
+
+    --muted: 48 22% 92%;
+    --muted-foreground: 50 4% 44%;
+
+    --accent: 48 25% 90%;
+    --accent-foreground: 60 3% 24%;
+
+    --destructive: 0 65% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 38% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 48%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 50 16% 86%;
+    --input: 50 16% 86%;
+    --ring: 15 56% 52%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 60 3% 11%;
+    --foreground: 48 20% 92%;
+
+    --card: 60 3% 14%;
+    --card-foreground: 48 20% 92%;
+
+    --primary: 15 60% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 60 3% 18%;
+    --secondary-foreground: 48 20% 92%;
+
+    --muted: 60 3% 18%;
+    --muted-foreground: 50 5% 60%;
+
+    --accent: 60 3% 20%;
+    --accent-foreground: 48 20% 92%;
+
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 38% 46%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 52%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 60 3% 22%;
+    --input: 60 3% 22%;
+    --ring: 15 60% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /* Scrollable but with the scrollbar visually hidden. */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
