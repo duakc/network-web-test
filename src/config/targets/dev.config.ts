@@ -40,27 +40,6 @@ export const DEV_TARGETS: NetworkTarget[] = [
     builtIn: true,
   },
   {
-    id: "vercel",
-    name: "Vercel",
-    icon: iconFor("vercel.com"),
-    // Vercel runs its own edge CDN; the serving PoP is in `x-vercel-id` (first
-    // token, e.g. `hkg1`). NB: vercel.com sends CORS but no
-    // `Access-Control-Expose-Headers`, so the browser can't READ x-vercel-id
-    // cross-origin — live PoP isn't possible here, only the offline vendor label.
-    latencyUrl: "https://vercel.com/",
-    tags: ["Dev", "Cloud", "CDN"],
-    group: "Dev",
-    builtIn: true,
-  },
-  {
-    id: "netlify",
-    name: "Netlify",
-    icon: iconFor("netlify.com"),
-    latencyUrl: "https://www.netlify.com/",
-    tags: ["Dev", "Cloud"],
-    builtIn: true,
-  },
-  {
     id: "notion",
     name: "Notion",
     icon: iconFor("notion.so"),

@@ -31,7 +31,7 @@ export const CDN_TARGETS: NetworkTarget[] = [
     icon: iconFor("cloudflare.com"),
     latencyUrl: "https://www.cloudflare.com/cdn-cgi/trace",
     latency: { method: "GET" },
-    tags: ["CDN", "Speedtest"],
+    tags: ["CDN"],
     cloudflare: true,
     speed: {
       kind: "cloudflare",
@@ -140,7 +140,7 @@ export const CDN_TARGETS: NetworkTarget[] = [
     icon: iconFor("jsdelivr.com"),
     // Purpose-built latency-test package file (generate_200 → empty 200).
     latencyUrl: "https://cdn.jsdelivr.net/npm/latency-test@1.0.1/generate_200",
-    tags: ["CDN", "Speedtest"],
+    tags: ["CDN"],
     // A large, definitely-present, CORS-enabled (ACAO *) asset; workers loop it.
     speed: {
       kind: "fixed",
@@ -261,12 +261,33 @@ export const CDN_TARGETS: NetworkTarget[] = [
     // g.alicdn.com serves static assets with ACAO * — read the real status too.
     latencyUrl: "https://g.alicdn.com/favicon.ico",
     latency: { mode: "cors", okStatus: [200] },
-    tags: ["CDN", "CN", "Speedtest", "Aliyun"],
+    tags: ["CDN", "CN", "Aliyun"],
     // g.alicdn.com serves static assets with ACAO *, so throughput is measurable.
     speed: {
       kind: "fixed",
       url: "https://g.alicdn.com/code/lib/jquery/3.6.0/jquery.min.js",
     },
+    builtIn: true,
+  },
+  // ---- Edge platforms (own global CDN) — kept here, also tagged Dev/Cloud ----
+  // Both encode their serving PoP in a response header (Vercel `x-vercel-id`'s
+  // first token, e.g. `hkg1`; Netlify `server-timing` `dc;desc="aws-icn"`), but
+  // NEITHER sends Access-Control-Expose-Headers / Timing-Allow-Origin, so the
+  // browser can't READ those cross-origin — live PoP isn't possible, latency only.
+  {
+    id: "vercel",
+    name: "Vercel",
+    icon: iconFor("vercel.com"),
+    latencyUrl: "https://vercel.com/",
+    tags: ["CDN", "Dev", "Cloud"],
+    builtIn: true,
+  },
+  {
+    id: "netlify",
+    name: "Netlify",
+    icon: iconFor("netlify.com"),
+    latencyUrl: "https://www.netlify.com/",
+    tags: ["CDN", "Dev", "Cloud"],
     builtIn: true,
   },
 ];

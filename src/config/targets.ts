@@ -91,9 +91,17 @@ export const PRESET_TARGETS: NetworkTarget[] = RAW_PRESETS.map((t) => {
       ? { popBody: true, popInfo: cloudflarePop }
       : undefined);
 
+  // Any target with a `speed` source is speed-testable, so it carries the
+  // Speedtest tag automatically — single source of truth, no per-config drift
+  // (Vultr defines speed but used to lack the tag).
+  const tags =
+    t.speed && !t.tags.includes("Speedtest")
+      ? [...t.tags, "Speedtest" as const]
+      : t.tags;
+
   // Group defaults to the first tag, but is its own field so it can be set
   // independently of the (filterable) tag list.
-  return { ...t, icon, group: t.group ?? t.tags[0], cdn, cdnVendor: vendor, cloudflare };
+  return { ...t, tags, icon, group: t.group ?? t.tags[0], cdn, cdnVendor: vendor, cloudflare };
 });
 
 /**

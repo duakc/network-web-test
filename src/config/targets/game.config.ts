@@ -19,7 +19,7 @@ export const GAME_TARGETS: NetworkTarget[] = [
     name: "Steam · Cloudflare",
     icon: iconFor("steampowered.com"),
     latencyUrl: "https://cdn.cloudflare.steamstatic.com",
-    tags: ["Game", "CDN", "Speedtest"],
+    tags: ["Game", "CDN"],
     speed: {
       kind: "fixed",
       url: "https://cdn.cloudflare.steamstatic.com/steam/apps/1063730/extras/NW_Sword_Sorcery_2.gif",
@@ -31,7 +31,7 @@ export const GAME_TARGETS: NetworkTarget[] = [
     name: "Steam · Akamai",
     icon: iconFor("steampowered.com"),
     latencyUrl: "https://cdn.akamai.steamstatic.com",
-    tags: ["Game", "CDN", "Speedtest"],
+    tags: ["Game", "CDN"],
     speed: {
       kind: "fixed",
       url: "https://cdn.akamai.steamstatic.com/steam/apps/1063730/extras/NW_Sword_Sorcery_2.gif",
