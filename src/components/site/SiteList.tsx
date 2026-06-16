@@ -1,9 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowDownNarrowWide,
   CheckSquare,
+  ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Gauge,
   Plus,
   RotateCcw,
@@ -66,7 +69,10 @@ export function SiteList({
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<NetworkTarget | null>(null);
   const [grouped, setGrouped] = useState(true);
-  const [collapsed, setCollapsed] = useState<Set<SiteTag>>(new Set());
+  const [tagsExpanded, setTagsExpanded] = useState(false);
+  // Groups start COLLAPSED: with hundreds of region cards, default-collapsing keeps
+  // the initial DOM and work minimal — expanding a group mounts its cards on demand.
+  const [expanded, setExpanded] = useState<Set<SiteTag>>(new Set());
 
   // Tags actually present, in canonical order, for the quick-filter chips.
   const availableTags = useMemo(() => {
@@ -117,7 +123,7 @@ export function SiteList({
   const groups = useMemo(() => {
     const map = new Map<SiteTag, NetworkTarget[]>();
     for (const t of filtered) {
-      const tag = (t.tags[0] ?? "Custom") as SiteTag;
+      const tag = (t.group ?? t.tags[0] ?? "Custom") as SiteTag;
       (map.get(tag) ?? map.set(tag, []).get(tag)!).push(t);
     }
     return TAG_ORDER.filter((tag) => map.has(tag)).map((tag) => ({
@@ -127,12 +133,16 @@ export function SiteList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, sortedIds]);
 
-  const toggleCollapse = (tag: SiteTag) =>
-    setCollapsed((prev) => {
+  const toggleGroup = (tag: SiteTag) =>
+    setExpanded((prev) => {
       const next = new Set(prev);
       next.has(tag) ? next.delete(tag) : next.add(tag);
       return next;
     });
+
+  const allExpanded = groups.length > 0 && groups.every((g) => expanded.has(g.tag));
+  const toggleAllGroups = () =>
+    setExpanded(allExpanded ? new Set() : new Set(groups.map((g) => g.tag)));
 
   const { speedRunning, monitoring, speedActivityId } = useMemo(() => {
     const speedRunning = new Set<string>();
@@ -221,20 +231,42 @@ export function SiteList({
           />
         </div>
 
-        {/* Quick tag filter — click to narrow without typing. */}
-        <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
-          <TagChip active={tagFilter === null} onClick={() => setTagFilter(null)}>
-            全部
-          </TagChip>
-          {availableTags.map((tag) => (
-            <TagChip
-              key={tag}
-              active={tagFilter === tag}
-              onClick={() => setTagFilter((cur) => (cur === tag ? null : tag))}
-            >
-              {tag}
+        {/* Quick tag filter — chips wrap vertically. Collapsed to a single row by
+            default with a down-arrow to reveal the rest; expanding grows downward
+            (no horizontal scrolling), which is friendlier on mobile. */}
+        <div className="flex items-start gap-1.5">
+          <div
+            className={cn(
+              "flex flex-1 flex-wrap gap-1.5",
+              !tagsExpanded && "max-h-8 overflow-hidden",
+            )}
+          >
+            <TagChip active={tagFilter === null} onClick={() => setTagFilter(null)}>
+              全部
             </TagChip>
-          ))}
+            {availableTags.map((tag) => (
+              <TagChip
+                key={tag}
+                active={tagFilter === tag}
+                onClick={() => setTagFilter((cur) => (cur === tag ? null : tag))}
+              >
+                {tag}
+              </TagChip>
+            ))}
+          </div>
+          {availableTags.length > 6 && (
+            <button
+              type="button"
+              onClick={() => setTagsExpanded((v) => !v)}
+              className="mt-0.5 shrink-0 rounded-full border border-border p-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+              aria-label={tagsExpanded ? "收起标签" : "展开更多标签"}
+              title={tagsExpanded ? "收起标签" : "展开更多标签"}
+            >
+              <ChevronDown
+                className={cn("size-4 transition-transform", tagsExpanded && "rotate-180")}
+              />
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -287,20 +319,10 @@ export function SiteList({
               </Button>
             </>
           ) : (
-            <>
-              <Button size="sm" onClick={() => onTestLatency(filtered)}>
-                <Activity />
-                测延迟全部
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onTestSpeed(filtered.filter((t) => t.speed), direction)}
-              >
-                <Gauge />
-                测速全部
-              </Button>
-            </>
+            <Button size="sm" onClick={() => onTestLatency(filtered)}>
+              <Activity />
+              测延迟全部
+            </Button>
           )}
 
           <div className="ml-auto flex items-center gap-2">
@@ -336,6 +358,17 @@ export function SiteList({
             <Switch id="grouped" checked={grouped} onCheckedChange={setGrouped} />
             <Label htmlFor="grouped" className="cursor-pointer">按标签分组</Label>
           </div>
+          {grouped && groups.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7"
+              onClick={toggleAllGroups}
+            >
+              {allExpanded ? <ChevronsDownUp /> : <ChevronsUpDown />}
+              {allExpanded ? "收起全部" : "展开全部"}
+            </Button>
+          )}
         </div>
 
         {formOpen && (
@@ -375,33 +408,46 @@ export function SiteList({
         <div className="space-y-4">
           {groups.map((g) => (
             <section key={g.tag} className="space-y-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => toggleCollapse(g.tag)}
-                  className="flex items-center gap-1.5 text-sm font-semibold"
-                >
-                  <ChevronRight
-                    className={cn(
-                      "size-4 text-muted-foreground transition-transform",
-                      !collapsed.has(g.tag) && "rotate-90",
-                    )}
-                  />
-                  {g.tag}
-                  <span className="text-xs font-normal text-muted-foreground">{g.items.length}</span>
-                </button>
+              {/* The whole row toggles the group — a big, easy click target. */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleGroup(g.tag)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleGroup(g.tag);
+                  }
+                }}
+                className="flex cursor-pointer items-center gap-1.5 rounded-md py-1 text-sm font-semibold hover:bg-muted/50"
+              >
+                <ChevronRight
+                  className={cn(
+                    "size-4 text-muted-foreground transition-transform",
+                    expanded.has(g.tag) && "rotate-90",
+                  )}
+                />
+                {g.tag}
+                <span className="text-xs font-normal text-muted-foreground">{g.items.length}</span>
                 <Button
                   variant="ghost"
                   size="sm"
                   className="ml-auto h-7 text-muted-foreground hover:text-foreground"
-                  onClick={() => onTestLatency(g.items)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTestLatency(g.items);
+                  }}
                   title={`测试 ${g.tag} 组延迟`}
                 >
                   <Activity className="size-3.5" />
                   测本组
                 </Button>
               </div>
-              {!collapsed.has(g.tag) && <SiteGrid items={g.items} renderCard={renderCard} />}
+              {expanded.has(g.tag) && (
+                <LazyMount>
+                  <SiteGrid items={g.items} renderCard={renderCard} />
+                </LazyMount>
+              )}
             </section>
           ))}
         </div>
@@ -410,6 +456,44 @@ export function SiteList({
       )}
     </div>
   );
+}
+
+/**
+ * Defers mounting its children until they scroll near the viewport, then keeps
+ * them mounted. With many groups (~hundreds of cards) this keeps the initial DOM
+ * small — offscreen groups stay a cheap placeholder until you scroll to them.
+ */
+function LazyMount({
+  children,
+  minHeight = 220,
+}: {
+  children: React.ReactNode;
+  minHeight?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (shown) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setShown(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setShown(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "600px" }, // mount a bit before it enters view
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shown]);
+
+  return <div ref={ref}>{shown ? children : <div style={{ minHeight }} />}</div>;
 }
 
 /** A responsive card grid with FLIP reordering for its items. */

@@ -3,6 +3,15 @@
 export type SiteTag =
   | "Speedtest"
   | "CDN"
+  | "AWS"
+  | "Linode"
+  | "Vultr"
+  | "Aliyun"
+  | "Tencent"
+  | "Huawei"
+  | "Baidu"
+  | "GCP"
+  | "Azure"
   | "AI"
   | "Cloud"
   | "Dev"
@@ -29,6 +38,15 @@ export type SiteTag =
 export const TAG_ORDER: SiteTag[] = [
   "Speedtest",
   "CDN",
+  "AWS",
+  "Linode",
+  "Vultr",
+  "Aliyun",
+  "Tencent",
+  "Huawei",
+  "Baidu",
+  "GCP",
+  "Azure",
   "AI",
   "Cloud",
   "Dev",

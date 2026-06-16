@@ -30,7 +30,8 @@ const ICONS = {
   gemini: "gemini.google.com",
   perplexity: "perplexity.ai",
   huggingface: "huggingface.co",
-  aws: "aws.amazon.com",
+  // `aws` + all `aws-<region>` points reuse the CloudFront icon (an svg override
+  // in icons-override/cloudfront.svg), so neither is auto-fetched here.
   gcp: "cloud.google.com",
   azure: "azure.microsoft.com",
   digitalocean: "digitalocean.com",
@@ -87,7 +88,6 @@ const ICONS = {
   cdn77: "cdn77.com",
   "bunny-standard": "bunny.net",
   "bunny-volume": "bunny.net",
-  cloudfront: "aws.amazon.com",
   bytedance: "bytedance.com",
   alicdn: "alibabacloud.com",
   zenlayer: "zenlayer.com",

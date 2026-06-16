@@ -41,6 +41,14 @@ export interface LatencyProbe {
   /** HTTP method. Default `HEAD`. Use `GET` for servers that refuse/RST HEAD. */
   method?: "HEAD" | "GET";
   /**
+   * Transport. Default `fetch`. `img` loads the URL as an `<img>` instead — an
+   * image request sends NO `Origin` header, so object-storage endpoints
+   * (OSS/BOS/COS/OBS) that 403 a cross-origin `fetch` answer 200 to it (this is how
+   * CloudPing pings). Use only for such buckets; the round trip is timed via
+   * onload/onerror, so a reachable error reply still counts (can't read status).
+   */
+  transport?: "fetch" | "img";
+  /**
    * Fetch mode. Default `no-cors` (opaque, works anywhere, status unreadable).
    * `cors` lets us read the real status — but ONLY works on endpoints that send
    * CORS headers (incl. on their error responses); elsewhere every probe throws.
@@ -92,10 +100,22 @@ export interface NetworkTarget {
   icon: string;
   latencyUrl: string;
   tags: SiteTag[];
+  /**
+   * Which category bucket the grouped view files this target under. Decoupled
+   * from `tags` so a target's group is independent of its (filterable) tag list
+   * and their order. Defaults to the first tag when unset (see PRESET_TARGETS).
+   */
+  group?: SiteTag;
   cloudflare?: boolean;
   speed?: SpeedConfig;
   /** Per-site latency probe overrides. Omit for the default HEAD/no-cors probe. */
   latency?: LatencyProbe;
+  /**
+   * Hard cap on probes per run, regardless of the user's 延迟次数 setting. Set on
+   * courtesy/public-benefit endpoints (e.g. CloudPing's per-region buckets) so a
+   * large run can't hammer someone's volunteer-funded service.
+   */
+  maxLatencyCount?: number;
   /** CDN PoP-detection config. Present only on CDN built-ins. */
   cdn?: CdnProbe;
   /**
@@ -143,7 +163,7 @@ export interface TestSettings {
   speedLimitMode: "time" | "data";
   /** Speed test time budget in ms (used when `speedLimitMode === "time"`). */
   speedDurationMs: number;
-  /** Stop the speed test after this many MB (used when `speedLimitMode === "data"`; min 300). */
+  /** Stop the speed test after this many MB (used when `speedLimitMode === "data"`; min 500). */
   speedStopMB: number | null;
   /** Ramp connections in gradually instead of all at once. */
   speedRamp: boolean;

@@ -84,9 +84,16 @@ export function useTestRunner(settings: TestSettings) {
     const c = new AbortController();
     latencyControllers.current.set(target.id, c);
 
+    // Courtesy cap: a target may pin a hard probe ceiling (public-benefit
+    // endpoints like CloudPing's per-region buckets, where over-testing runs up
+    // the volunteer author's bill). Never exceed it, whatever 延迟次数 is set to.
+    const count = Math.min(
+      settingsRef.current.latencyCount,
+      target.maxLatencyCount ?? Infinity,
+    );
     // Large runs (>16 probes) are too detailed for the small card, so they are
     // also surfaced in the activity feed (and can be removed/stopped there).
-    const logToFeed = settingsRef.current.latencyCount > 16;
+    const logToFeed = count > 16;
     const activityId = logToFeed ? nextId() : null;
     if (activityId) {
       activityControllers.current.set(activityId, c);
@@ -127,7 +134,6 @@ export function useTestRunner(settings: TestSettings) {
     // to repaint once per block (`step` probes). The activity feed shows every
     // probe (synchronously, one sample = one update). The final result is always
     // flushed to both by `.then` below.
-    const count = settingsRef.current.latencyCount;
     const step = Math.max(1, Math.floor(count / 16));
 
     measureLatency(target.latencyUrl, {
@@ -209,14 +215,14 @@ export function useTestRunner(settings: TestSettings) {
         : a,
     );
 
-    // Time and traffic limits are mutually exclusive. In "data" mode the timer
-    // is pushed far out so only the byte cap stops the run; in "time" mode there
-    // is no byte cap (the engine's 300 MiB floor still applies to downloads).
+    // Time and traffic limits are mutually exclusive and STRICT. In "data" mode
+    // the timer is pushed far out so only the byte cap stops the run; in "time"
+    // mode there is no byte cap, so the run stops exactly when the timer fires.
     const dataMode = s.speedLimitMode === "data";
     runSpeedTest(job.target.speed!, {
       threads: s.speedThreads,
       durationMs: dataMode ? 24 * 60 * 60 * 1000 : s.speedDurationMs,
-      stopBytes: dataMode ? Math.max(300, s.speedStopMB ?? 300) * 1024 * 1024 : null,
+      stopBytes: dataMode ? Math.max(500, s.speedStopMB ?? 500) * 1024 * 1024 : null,
       ramp: s.speedRamp,
       // Ramp pacing follows the configured duration even when the byte cap (not
       // time) is what actually stops the run.

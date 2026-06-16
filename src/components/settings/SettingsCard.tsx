@@ -148,8 +148,8 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
                 type="button"
                 onClick={() =>
                   onChange(
-                    mode === "data" && (settings.speedStopMB ?? 0) < 300
-                      ? { speedLimitMode: mode, speedStopMB: 300 }
+                    mode === "data" && (settings.speedStopMB ?? 0) < 500
+                      ? { speedLimitMode: mode, speedStopMB: 500 }
                       : { speedLimitMode: mode },
                   )
                 }
@@ -175,10 +175,10 @@ export function SettingsCard({ settings, onChange }: SettingsCardProps) {
           ) : (
             <NumberField
               label="流量上限(MB)"
-              value={settings.speedStopMB ?? 300}
-              min={300}
+              value={settings.speedStopMB ?? 500}
+              min={500}
               max={100000}
-              onChange={(v) => onChange({ speedStopMB: Math.max(300, v) })}
+              onChange={(v) => onChange({ speedStopMB: Math.max(500, v) })}
             />
           )}
           <ToggleRow

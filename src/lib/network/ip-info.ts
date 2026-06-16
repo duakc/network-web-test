@@ -21,8 +21,14 @@ interface RipeNetworkInfo {
 }
 
 /** Map an ip.sb geoip payload to our IpInfo, then merge in the routed prefix. */
-async function geoipFromUrl(url: string, signal?: AbortSignal): Promise<IpInfo> {
-  const res = await fetch(url, { headers: { Accept: "application/json" }, signal });
+async function geoipFromUrl(
+  url: string,
+  signal?: AbortSignal,
+): Promise<IpInfo> {
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
   if (!res.ok) throw new Error(`ip.sb 返回 ${res.status}`);
   const data = (await res.json()) as IpSbGeoIp;
   const info: IpInfo = {
@@ -93,10 +99,13 @@ export async function lookupIp(
   signal?: AbortSignal,
 ): Promise<IpGeo | null> {
   try {
-    const res = await fetch(`https://api.ip.sb/geoip/${encodeURIComponent(ip)}`, {
-      headers: { Accept: "application/json" },
-      signal,
-    });
+    const res = await fetch(
+      `https://api.ip.sb/geoip/${encodeURIComponent(ip)}`,
+      {
+        headers: { Accept: "application/json" },
+        signal,
+      },
+    );
     if (!res.ok) return null;
     const d = (await res.json()) as IpSbGeoIp & { isp?: string };
     return {
@@ -111,9 +120,18 @@ export async function lookupIp(
   }
 }
 
+export function PeerAsUrl(prefix: string): string {
+  return `https://peer.as/${prefix}`;
+}
+
 /** External link to bgp.tools for a given prefix. */
 export function bgpToolsUrl(prefix: string): string {
   return `https://bgp.tools/prefix/${prefix}`;
+}
+
+/** External link to bgp.tools for a given ASN. */
+export function bgpToolsAsnUrl(asn: number): string {
+  return `https://bgp.tools/as/${asn}`;
 }
 
 /** External link to PeeringDB for a given ASN. */

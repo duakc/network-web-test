@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useCdnNode } from "@/hooks/useCdnNode";
 import { useInView } from "@/hooks/useInView";
 import { cdnNodePlace, hostOf, originOf } from "@/lib/network/site";
@@ -89,13 +88,16 @@ export function SiteCard({
   return (
     <div
       ref={ref}
+      onClick={onToggleSelect}
+      role="button"
+      aria-pressed={selected}
+      title={selected ? "点击取消选择" : "点击选择"}
       className={cn(
-        "rounded-lg border bg-card p-2.5 transition-colors",
-        selected ? "border-primary/50 bg-primary/[0.03]" : "border-border",
+        "cursor-pointer select-none rounded-lg border bg-card p-2.5 transition-colors",
+        selected ? "border-primary/50 bg-primary/[0.03]" : "border-border hover:border-primary/30",
       )}
     >
       <div className="flex items-center gap-2">
-        <Checkbox checked={selected} onCheckedChange={onToggleSelect} aria-label={`选择 ${target.name}`} />
         <Favicon target={target} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -105,6 +107,7 @@ export function SiteCard({
                 href={siteUrl}
                 target="_blank"
                 rel="noreferrer noopener"
+                onClick={(e) => e.stopPropagation()}
                 className="block truncate text-sm font-medium hover:text-primary hover:underline"
               >
                 {target.name}
@@ -119,6 +122,7 @@ export function SiteCard({
                 href={siteUrl}
                 target="_blank"
                 rel="noreferrer noopener"
+                onClick={(e) => e.stopPropagation()}
                 className="block truncate text-[11px] text-muted-foreground hover:text-foreground hover:underline"
               >
                 {host}
@@ -288,7 +292,10 @@ function IconAction({
         danger && "hover:text-destructive",
         loading && "text-primary",
       )}
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation(); // don't also toggle card selection
+        onClick?.();
+      }}
       disabled={disabled}
       aria-label={label}
       title={label}

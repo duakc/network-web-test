@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import {
   Activity as ActivityIcon,
   ArrowDown,
@@ -20,7 +20,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { LatencyBars } from "@/components/site/LatencyBars";
 import { MonitorBars } from "@/components/activity/MonitorBars";
-import { SpeedChart } from "@/components/speed/SpeedChart";
+// recharts is heavy (~80 KB gz). Load the speed chart only when one actually
+// renders, so the charts bundle isn't in the initial download.
+const SpeedChart = lazy(() =>
+  import("@/components/speed/SpeedChart").then((m) => ({ default: m.SpeedChart })),
+);
 import { formatBytes, formatMs, formatSeconds, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Activity, NetworkTarget, SpeedDirection } from "@/types";
@@ -230,7 +234,11 @@ function SpeedActivity({
           <Metric icon={<Clock className="size-3.5" />} label="首字节延迟" value={typeof latencyMs === "number" ? formatMs(latencyMs) : "—"} />
         </div>
 
-        {!queued && <SpeedChart samples={samples} />}
+        {!queued && (
+          <Suspense fallback={<div className="h-48 w-full" />}>
+            <SpeedChart samples={samples} />
+          </Suspense>
+        )}
 
         {/* Per-second throughput distribution (settled runs only). */}
         {hasPct && (

@@ -98,6 +98,62 @@ function httpProbe(
   })();
 }
 
+/**
+ * `<img>` transport — load the URL as an image and time onload/onerror. Unlike
+ * `fetch`, an image request carries NO `Origin` header, so object-storage buckets
+ * (Aliyun OSS / Baidu BOS / Tencent COS / Huawei OBS) that 403 a cross-origin fetch
+ * answer 200 here — no console error. A 200 `ping.html` isn't a decodable image, so
+ * it lands on `onerror`; either callback means the server replied, so we time both.
+ * A per-call cache-buster keeps every probe a fresh round trip (no `cache:no-store`
+ * on `<img>`). Caveat: a hard network failure also fires `onerror`, so a truly
+ * unreachable bucket can read as a fast hit — acceptable for these usually-up
+ * endpoints (this is exactly how CloudPing pings them).
+ */
+let imgProbeSeq = 0;
+function imgProbe(
+  baseUrl: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<ProbeResult> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    let settled = false;
+    const start = performance.now();
+    const settle = (r: ProbeResult) => {
+      if (settled) return;
+      settled = true;
+      img.onload = img.onerror = null;
+      img.src = ""; // cancel any in-flight load
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(r);
+    };
+    const onAbort = () => settle({ rtt: null, note: { reason: "请求失败" } });
+    const timer = setTimeout(
+      () => settle({ rtt: null, note: { reason: "超时" } }),
+      timeoutMs,
+    );
+    if (signal?.aborted) return settle({ rtt: null, note: { reason: "请求失败" } });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const reply = () => settle({ rtt: performance.now() - start, note: null });
+    img.onload = reply;
+    img.onerror = reply;
+    img.src = baseUrl + (baseUrl.includes("?") ? "&" : "?") + "_=" + ++imgProbeSeq;
+  });
+}
+
+/** Dispatch one probe to the configured transport (default `fetch`). */
+function probeOnce(
+  url: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  probe: LatencyProbe | undefined,
+): Promise<ProbeResult> {
+  return probe?.transport === "img"
+    ? imgProbe(url, timeoutMs, signal)
+    : httpProbe(url, timeoutMs, signal, probe);
+}
+
 export interface MeasureLatencyOptions {
   count?: number;
   timeoutMs?: number;
@@ -135,13 +191,13 @@ export async function measureLatency(
     return summarize(samples, notes);
   }
 
-  if (!skipWarmup) await httpProbe(url, timeoutMs, signal, probe);
+  if (!skipWarmup) await probeOnce(url, timeoutMs, signal, probe);
 
   const samples: (number | null)[] = [];
   const notes: (ProbeNote | null)[] = [];
   for (let i = 0; i < count; i++) {
     if (signal?.aborted) break;
-    const { rtt, note } = await httpProbe(url, timeoutMs, signal, probe);
+    const { rtt, note } = await probeOnce(url, timeoutMs, signal, probe);
     samples.push(rtt);
     notes.push(note);
     onSample?.(rtt, note, i);

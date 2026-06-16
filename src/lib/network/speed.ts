@@ -42,8 +42,6 @@ export interface RunSpeedTestOptions {
  */
 const CLOUDFLARE_BYTES_PER_THREAD = 300 * 1024 * 1024; // 300 MiB per request.
 
-/** A speed run always transfers at least this much before it may stop. */
-const MIN_SPEED_BYTES = 300 * 1024 * 1024; // 300 MiB minimum sample.
 /**
  * Per-request upload payload (reused across requests/threads). The Blob is left
  * type-less on purpose: a typed body (or an `xhr.upload` progress listener) makes
@@ -96,26 +94,51 @@ export async function runSpeedTest(
   const shared: Shared = { bytes: 0, firstByteAt: null, activeThreads: 0 };
   const start = performance.now();
 
-  // Minimum transfer floor (download only): a run never stops before
-  // MIN_SPEED_BYTES, so even a fast link that blows past the time budget still
-  // measures a meaningful sample (and a too-small 流量上限 is raised to this
-  // floor). Upload uplinks are typically far slower, so a 300 MB floor there
-  // would punish the user — upload just honours the time/stop budget.
-  const floorBytes = direction === "up" ? 0 : MIN_SPEED_BYTES;
-  const effectiveStopBytes = stopBytes
-    ? Math.max(stopBytes, floorBytes)
-    : null;
-  let durationElapsed = false;
-
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
-  // The time budget is a soft target: it won't cut the run off until the byte
-  // floor is met (otherwise sample() trips the abort once the floor is reached).
-  const stopTimer = setTimeout(() => {
-    durationElapsed = true;
-    if (shared.bytes >= floorBytes) controller.abort();
-  }, durationMs);
+
+  // Stop conditions are STRICT and mutually exclusive — the caller sets exactly
+  // one. "time" mode passes a real `durationMs` with `stopBytes: null`, so this
+  // timer is the only thing that stops the run (honoured to the millisecond, no
+  // minimum-transfer floor). "data" mode pushes `durationMs` far out and passes a
+  // byte cap, so `sample()` aborts the instant the cap is reached. Whichever limit
+  // the user picks (按时间 / 按流量) is the one that applies — nothing else.
+  const stopTimer = setTimeout(() => controller.abort(), durationMs);
+
+  // --- Compression correction (download). ---
+  // The stream reader counts DECOMPRESSED bytes, so a gzip/br response (a CDN
+  // serving .js/.wasm, etc.) over-reports throughput — historically ~30% high vs
+  // Cloudflare's incompressible `__down`. When the endpoint sends a
+  // `Timing-Allow-Origin` header, Resource Timing exposes the true wire size
+  // (`encodedBodySize`) next to the decoded size, so we scale the decoded byte
+  // count back down to wire bytes. No TAO (e.g. Steam's gif) or no compression
+  // (Cloudflare) → `encoded === decoded` → scale stays 1 and nothing changes.
+  const workerUrl =
+    config.kind === "cloudflare"
+      ? `${config.url}?bytes=${CLOUDFLARE_BYTES_PER_THREAD}`
+      : config.url;
+  let wireScale = 1;
+  // Drop accumulated Resource Timing entries so a long run's many requests can't
+  // overflow the (default 250-entry) buffer and evict our own samples — and so the
+  // browser isn't holding thousands of stale timing objects. Safe: speed runs are
+  // serialized, and `refreshWireScale` only counts entries from this run anyway.
+  if (typeof performance?.clearResourceTimings === "function") {
+    performance.clearResourceTimings();
+  }
+  const refreshWireScale = () => {
+    if (direction === "up" || typeof performance?.getEntriesByName !== "function")
+      return;
+    let enc = 0;
+    let dec = 0;
+    for (const entry of performance.getEntriesByName(workerUrl)) {
+      if (entry.startTime < start) continue; // ignore prior runs / probes
+      const r = entry as PerformanceResourceTiming;
+      enc += r.encodedBodySize || 0;
+      dec += r.decodedBodySize || 0;
+    }
+    if (enc > 0 && dec > enc) wireScale = enc / dec;
+  };
 
   // --- Per-second curve + live metrics. ---
   let emittedSeconds = 0;
@@ -125,9 +148,12 @@ export async function runSpeedTest(
   const perSecBps: number[] = [];
 
   const sample = () => {
+    refreshWireScale();
     const now = performance.now();
     const elapsed = (now - start) / 1000;
 
+    // `perSecBps`/`maxBps` accumulate RAW (decoded) bytes; the live curve and
+    // every reported figure apply `wireScale` so the user sees wire throughput.
     let curve: SpeedProgress["curve"];
     while (Math.floor(elapsed) > emittedSeconds) {
       emittedSeconds += 1;
@@ -135,25 +161,26 @@ export async function runSpeedTest(
       bytesAtLastSecond = shared.bytes;
       maxBps = Math.max(maxBps, secondBytes); // bytes in 1s == bytes/second
       perSecBps.push(secondBytes);
-      curve = { t: emittedSeconds, mbps: Number(toMbps(secondBytes).toFixed(2)) };
+      curve = { t: emittedSeconds, mbps: Number(toMbps(secondBytes * wireScale).toFixed(2)) };
     }
 
     const measuredSince = shared.firstByteAt ?? start;
     const measuredSec = (now - measuredSince) / 1000;
-    const avgBps = measuredSec > 0 ? shared.bytes / measuredSec : 0;
+    const wireBytes = shared.bytes * wireScale;
+    const avgBps = measuredSec > 0 ? wireBytes / measuredSec : 0;
 
     onProgress?.({
       t: Number(elapsed.toFixed(2)),
       avgBps,
-      maxBps,
-      bytes: shared.bytes,
+      maxBps: maxBps * wireScale,
+      bytes: wireBytes,
       activeThreads: shared.activeThreads,
       latencyMs: shared.firstByteAt !== null ? shared.firstByteAt - start : undefined,
       curve,
     });
 
-    if (effectiveStopBytes && shared.bytes >= effectiveStopBytes) controller.abort();
-    else if (durationElapsed && shared.bytes >= floorBytes) controller.abort();
+    // "data" mode stops on actual traffic (wire bytes), not decoded content size.
+    if (stopBytes && wireBytes >= stopBytes) controller.abort();
   };
 
   const ticker = setInterval(sample, sampleIntervalMs);
@@ -162,7 +189,7 @@ export async function runSpeedTest(
     const rampStep = ramp ? rampWindowMs / threadCount : 0;
     const worker = direction === "up"
       ? () => runUploadWorker(config.uploadUrl!, shared, controller.signal)
-      : () => runWorker(config, shared, controller.signal);
+      : () => runWorker(workerUrl, shared, controller.signal);
     const workers = Array.from({ length: threadCount }, (_, i) =>
       sleep(rampStep * i, controller.signal).then(() =>
         controller.signal.aborted ? undefined : worker(),
@@ -187,11 +214,17 @@ export async function runSpeedTest(
   sample();
 
   const end = performance.now();
+  refreshWireScale();
   const measuredSince = shared.firstByteAt ?? start;
   const durationMeasured = end - measuredSince;
-  const avgBps = durationMeasured > 0 ? shared.bytes / (durationMeasured / 1000) : 0;
+  const wireBytes = shared.bytes * wireScale;
+  const avgBps = durationMeasured > 0 ? wireBytes / (durationMeasured / 1000) : 0;
 
+  // `wireScale` is uniform, so a percentile of the scaled series equals the
+  // percentile of the raw series times the scale.
   const sortedBps = [...perSecBps].sort((a, b) => a - b);
+  const pct = (p: number) =>
+    sortedBps.length ? percentile(sortedBps, p) * wireScale : undefined;
 
   return {
     status: "done",
@@ -200,24 +233,20 @@ export async function runSpeedTest(
     latencyMs: shared.firstByteAt !== null ? shared.firstByteAt - start : undefined,
     durationMs: end - start,
     avgBps,
-    maxBps: Math.max(maxBps, avgBps),
-    bytes: shared.bytes,
-    p25: sortedBps.length ? percentile(sortedBps, 25) : undefined,
-    p50: sortedBps.length ? percentile(sortedBps, 50) : undefined,
-    p95: sortedBps.length ? percentile(sortedBps, 95) : undefined,
+    maxBps: Math.max(maxBps * wireScale, avgBps),
+    bytes: wireBytes,
+    p25: pct(25),
+    p50: pct(50),
+    p95: pct(95),
   };
 }
 
-async function runWorker(config: SpeedConfig, shared: Shared, signal: AbortSignal): Promise<void> {
+async function runWorker(url: string, shared: Shared, signal: AbortSignal): Promise<void> {
   // Each worker re-fetches the SAME url until the time/byte budget is hit. We do
   // NOT add a cache-buster: a unique query string forces an edge-cache MISS on
   // every request (Fastly/Cloudflare), which throttles throughput to the origin
   // pull instead of measuring the CDN. `cache: "no-store"` already stops the
   // browser from serving its own cached copy, so the same url is the fast path.
-  const url =
-    config.kind === "cloudflare"
-      ? `${config.url}?bytes=${CLOUDFLARE_BYTES_PER_THREAD}`
-      : config.url;
   while (!signal.aborted) {
     await streamOnce(url, shared, signal);
   }

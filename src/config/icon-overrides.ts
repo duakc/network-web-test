@@ -6,10 +6,7 @@ export const ICON_OVERRIDES: Record<string, string> = {
   "akamai": "akamai.svg",
   "aliyun": "aliyun.svg",
   "digitalocean": "digitalocean.svg",
-  "dropbox": "dropbox.svg",
-  "icloud": "icloud.svg",
   "jd": "jd.svg",
   "ovh": "ovh.svg",
-  "tencentcloud": "tencentcloud.svg",
   "twitch": "twitch.svg",
 };

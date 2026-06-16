@@ -4,6 +4,10 @@
 name = "network-test"
 compatibility_date = "2025-06-01"
 
+# Disable the auto-generated preview URLs (*.PROJECT.workers.dev per-version previews).
+preview_urls = false
+workers_dev = false
+
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
